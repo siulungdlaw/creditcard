@@ -1,0 +1,1166 @@
+---
+title: "HarvardX Data Science Capstone Project Submission: Credit Card"
+author: "SIU LUNG DAVID LAW"
+date: "1/7/2020"
+output: pdf_document
+number_sections: TRUE
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#knitr::opts_chunk$set(eval = FALSE)
+options(warn=0)
+```
+
+## Section 1: Overview and Executive Summary
+
+The purpose of this project is to create a machine learning system to predict default based on a data-set on Taiwan credit card clients from April 2005 to September 2005.  The data set comes from the UCI Machine Learning Repository Irvine, CA: University of California, School of Information and Computer Science (https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients#).  The data-set is originally contained in an excel worksheet with 30000 entries and 25 data-fields with the official explanation as following:
+
+Columns  | Field | Keys  
+----- | --------- | -------------------------------
+1  | ID | ID of each entry
+2 | LIMIT_BAL | Amount of given credit (NT dollar) including both the individual consumer credit and his/her family (supplementary) credit. 
+3 | SEX | 1 = male; 2 = female
+4 | EDUCATION | 1 = graduate school; 2 = university; 3 = high school; 4 = others
+5 | MARRIAGE | 1 = married; 2 = single; 3 = others
+6 |AGE | Age in year 
+7-12* | PAY_0, PAY_2-PAY_6 | History of past payment: PAY_0 = repayment status in Sept 2005; PAY_2 = repayment status in August 2005... PAY_6 = repayment status of April 2005 with -1 = pay duly; 1 = payment delay for one month; 2 = payment delay for two months;.. ; 8 = payment delay for eight months; 9 = payment delay for nine months and above  
+13-18 | BILL_AMT1 - BILL_AMT6| Amount of bill statement (NT dollar). BILL_AMT1 = bill amount in Sept 2005; BILL_AMT2 = bill amount in Aug 2005; ...; BILL_AMT6 = bill amount in April 2005. 
+19-24 | PAY_AMT1 - PAY-AMT6| Amount of previous payment (NT dollar). PAY_AMT1 = amount paid in September, 2005; PAY_AMT2 = amount paid in August, 2005; ...; PAY_AMT6 = amount paid in April, 2005
+25 | default |  1 = default payment in the next month, 0 = no default payment in the next month
+
+* For some unexplained reason, the field name for Sept 2005 payment status is called PAY_0 rather than the more logical PAY_1.  
+
+In this project, we will examine the data in this data-set in details by looking at their statistics and also using visualization techniques.  Also, we will propose six different models and compare their accuracy.  Among these six prediction models, with one of them is a proprietary model created by me and another one is a ensemble model based on that proprietary model.  The rest of the models are machine learning models from the caret package.
+
+A key issue we have encountered in our research is there is no formal definition of default provided along with the data-set.  Default can mean many things.  One conventional definition is failure to pay credit card bill for six consecutive months.  However, based on our data observation, this appears not the data-set default does not follow this definition.  Also, it is unclear if default is only related to the payment of credit card bill.  For example, it is unclear if a person is considered as default if he has no credit card bill or pays all his credit card bill on time but files bankruptcy due to his other liabilities.   Without this clear definition, it becomes very difficult to connect what we are modeling here with reality. 
+
+Still, we manage to make the following findings:
+
+* The data may need further cleaning
+  + There are many entries without proper documentation.  For example, there are significant number of PAY_0 entries with unexplained status 0 or -2. 
+  + The logic of many entries are inconsistent to the official explanation.  For example, there are entries where the BILL_AMT1 is 0 but somehow default in the next month.  In another example, we find there are abnormal movement in the payment status data.  We see there are significantly more people in "two month payment delay" in August 2005 than "one month payment delay" in July 2005.  This should be impossible as for a person to be two month delay in payment, he has to be one month delay in the previous month first.    
+  + All columns seem to be significantly dependent on each other, even for demography data such as SEX and MARRIAGE.  And this is not what we would expect.
+* PAY_0 is clearly the most important features for predicting default 
+* Ignoring all the above deficiencies, we manage to produce 6 models to predict default with most of them have accuracy above 77.8% (the level where assuming there is no default for everyone):
+
+Models  | Accuracy on train data | Accuracy on test data  
+----- | --------- | -------------------------------
+Proprietary | 82.1% | 81.7%
+Naive Bayesian | 80.3% | 80.2% 
+KNN (k=60)| 77.7% | 78.1%
+Random Forest (mtry=3) | 81.7% | 82.3%
+Logistic| 73% | 82.1%
+Ensemble|85.6% | 82.1%
+
+In the following section, we will detail the methodology we use to arrive at these conclusions.  We will only show the visualization output but not the codes in this report, as they are very long.  Interested users can review the codes in the separate R code files.  Also, it takes many hours or even days for my computer (iMac: Retina 5K, 27-inch, 2019; Processor: 3 GHz 6-Core Intel Core i5; Memory: 8 GB 2667 MHz DDR4) to generate the models.  Readers of this report may keep this in mind if they want to run the codes in the R code files.  If I have more computing power, I may be able to run a more extensive parameter calibration of the Random Forest and KNN models, resulting in more accurate models.
+
+
+## Section 2: Methods and Analysis
+Our analysis will follow the steps below, and this section and the R codes file will be indexed in the same manner.
+
+1. Preprocessing - This includes downloading file and install packages, importing file into data frame, changing classes of certain columns and participation file into train and test set.
+2. Basic Investigation - We inspect the files and data entries to identify abnormalities and patterns.
+3. Visualization - We further explore the relationship between different parameters and default.
+4. Modeling - The six models mentioned above will be created and explained here.
+5. Testing - These six models will then be tested using the test set.  
+
+### Sub 2.1 Preprocessing
+In this section, we will make the necessary steps we need to perform such as downloading data before doing the analysis.
+
+#### Sub 2.1.A Downloading Data and Packages
+As first step, we are going to download the file and relevant packages
+```{r create, echo=TRUE, message=FALSE, warning=FALSE}
+#1.A Downloading Data and Packages
+# Note: this process could take a couple of minutes
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(devtools)) install.packages("devtools", repos = "http://cran.us.r-project.org")
+if(!require(dplyr)) install.packages("dplyr", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(caret)
+library(dplyr)
+library(dslabs)
+library(readxl)
+library(ggpubr)
+
+dl <- tempfile()
+download.file("https://archive.ics.uci.edu/ml/machine-learning-databases/00350/default%20of%20credit%20card%20clients.xls", dl, cacheOK=TRUE)
+```
+
+#### Sub 2.1.B Importing Data into data frame 
+The next step is to put these data into a data frame
+```{r import, echo=TRUE, message=FALSE, warning=FALSE}
+#1.B Importing Data into data frame 
+xlsx_example <- read_excel(dl, range = cell_rows(c(2, NA)))
+df = as.data.frame(xlsx_example)
+```
+
+#### Sub 2.1.C Changing columns from numeric to factors
+In the imported data frame, all the data are numeric including SEX, MARRIAGE, EDUCATION, default status etc.  However, these should be categorical rather than numerical.  Therefore, we should change their classes to factors with the following codes.
+
+```{r change, echo=TRUE, message=FALSE}
+#1.C Changing columns from numeric to factors
+sapply(df, class)
+df$ID<-as.factor(df$ID)
+df$SEX<-as.factor(df$SEX)
+df$EDUCATION<-as.factor(df$EDUCATION)
+df$MARRIAGE<-as.factor(df$MARRIAGE)
+df$PAY_0<-as.factor(df$PAY_0)
+df$PAY_2<-as.factor(df$PAY_2)
+df$PAY_3<-as.factor(df$PAY_3)
+df$PAY_4<-as.factor(df$PAY_4)
+df$PAY_5<-as.factor(df$PAY_5)
+df$PAY_6<-as.factor(df$PAY_6)
+names(df)[25]<-"default"
+df$default<-as.factor(df$default)
+```
+
+After these changes, the following shows the classes of each columns
+```{r change2, echo=TRUE}
+sapply(df, class)
+```
+
+
+#### Sub 2.1.D Partitioning the date-set into test set and train set
+The last step is to partition the data-set into test set and train set.
+```{r partitioning, echo=TRUE, message=FALSE, warning=FALSE}
+#1.D partitioning the dateset into test set and train set
+set.seed(1, sample.kind="Rounding")
+test_index <- createDataPartition(y = df$default, times = 1, p = 0.1, list = FALSE)
+train <- df[-test_index,]
+test <- df[test_index,]
+```
+
+And we have completed the preprocessing.
+
+### Sub 2.2 Basic Investigation
+Now we can start making some preliminary investigation of data.
+
+#### Sub 2.2.A Calculating Basic Statistics
+The following are the codes to run the basic statistics and the default rate of the whole train set.  We also define the variables total_default, total_n_default, total_pop and default_prop to denote total number of defaults, total number of non-defaults, total number of population and the default ratio respectively.
+```{r basicstat, echo=TRUE, message=TRUE, warning=FALSE}
+#2.A Calculating Basic Statistics
+summary(train)
+nrow(train)
+total_default<-sum(train$default==1) # total default number
+total_n_default<-sum(train$default==0) #total non-default number
+total_pop<-total_default+total_n_default #total population
+default_prop<-total_default/(total_default+total_n_default) #ratio of default
+default_prop
+```
+From the above, we observe the following:
+
+* There are 26999 rows of data, and among these there are 5972 defaults.
+* The default rate for the train set is 22.1%.
+* There are many data with status that are undocumented from the data provider:
+  - EDUCATION status as 0, 4, 5, 6
+  - MARRIAGE status as 0
+  - PAY_X status as 0 and -2, and the numbers of data with such status are very significant
+
+Also, as a relatively minor point, there is no column with name "PAY_1" and there are only "PAY_0" and "PAY_2".  According to official data description, PAY_0 is supposed to represent payment status of SEP 2005 while PAY_2 represents payment status of AUG 2005 and there is no gap month in between.
+
+#### Sub 2.2.B Identifying and Investigating Undocumented Data
+The following codes allow us to make some basic investigation of undocumented data
+
+The first is to evaluate the EDUCATION status against LIMIT_BAL.
+```{r investigate_EDUCATION_data}
+#2.B Identifying and Investigating Undocumented Data
+train%>% group_by(EDUCATION) %>% 
+  summarize(n=n(), Q_1=quantile(LIMIT_BAL,0.25), median = median(LIMIT_BAL), mean = mean(LIMIT_BAL), 
+            Q_3=quantile(LIMIT_BAL,0.75)) #No clear pattern for the undocuemnted Education
+```
+
+The above table shows different EDUCATION status against LIMIT_BAL.  We would expect generally speaking higher education would imply higher credit rating and thus higher LIMIT_BAL.  The above table confirms this understanding, as LIMIT_BAL for EDUCATION status 1 is better than 2, and 2 is better than 3.  EDUCATION status 4 is "considered as "others" according to the official definition, and apparently this does not necessarily mean lower education than status 3, which is high school.  Also, EDUCATION status 0, 5 and 6 are undocumented.  From the stat above, it is not clear roughly where do these refer to.
+
+Next, we evaluate MARRIAGE against LIMIT_BAL:
+
+```{r investigate_MARRIAGE_data}
+#2.B Identifying and Investigating Undocumented Data
+train%>% group_by(MARRIAGE) %>% 
+  summarize(n=n(), Q_1=quantile(LIMIT_BAL,0.25), median = median(LIMIT_BAL), mean = mean(LIMIT_BAL), Q_3=quantile(LIMIT_BAL,0.75))#No clear pattern for the undocuemnted Marriage
+```
+
+The above table shows different MARRIAGE status against LIMIT_BAL.  According to the documentation, 1 represents married, 2 represents single, 3 represents others and there is no explanation of 0.  Status 0 seems to be different to all these three status.  Given the number of such entries are not significant, we are not too worried about this.
+
+Next we will investigate the pay status with the following charts.  Please note status 0 and -2 are not documented:
+
+```{r investigate_paystatus, fig.height=3, fig.width=5}
+#2.B Identifying and Investigating Undocumented Data
+barchart(train$PAY_0, ylab="PAY_0", col ="cornflowerblue")
+barchart(train$PAY_2, ylab="PAY_2", col ="cornflowerblue")
+barchart(train$PAY_3, ylab="PAY_3", col ="cornflowerblue")
+barchart(train$PAY_4, ylab="PAY_4", col ="cornflowerblue")
+```
+
+From these graphs, it appears the distribution of different status for PAY_0, PAY_2, PAY_3 and PAY_4 are similar except that PAY_0 seems to have significantly more status 1 compared to others.  In fact, the status 1 figures in PAY_2, PAY_3, PAY_4 and PAY_5 appear to be abnormal.  As we may recall, status 2 in PAY_2 represents one has payment delay for 2 months in Aug 2005.  For this to happen, there must be one month delay in July 2005 (i.e. status 1 in PAY_3).  However, we see that status 1 in PAY_3 is much fewer than status 2 in PAY_2, and this is illogical.  The same abnormality also occurs between PAY_3 and PAY_4.
+
+Next, we investigate the transition of status between PAY_0 and PAY_2. 
+```{r investigate_paystatus2}
+table(train$PAY_0, train$PAY_2)
+```
+
+From this table, nearly all PAY_0 status -2 either come from PAY_2 status of -2 or -1.  As -1 means one has duly paid, then -2 seems to represent even a better status as the source of -2 are better than -1.  So, we presume -2 represents something like "duly pay for a long time". On the other hand,  comparing the transition from PAY_2 status of 0 and -1, we find that although both these can transit to PAY_0 status of -1, 0, 1 ,2, we find PAY_2 status of 0 generally transit to a "worse" status of PAY_0.  Therefore, we conjecture status 0 represents something that is worse than duly pay (status -1) but is better than delay in payment, which is something like making the "min pay".
+
+This table also shows the abnormality of lack of status 1 for PAY_2. We also see significant of PAY_2 status 2 transit to status 1 or 2 in PAY_0.  This should be impossible for one to have a 2 month payment delay in AUG 2005 to transit to 1 month payment delay or 2 month delay in Sept 2005.  
+
+We can make another transition table between PAY_2 and PAY_3 and the same pattern emerges.
+```{r investigate_paystatus3}
+table(train$PAY_2, train$PAY_3)
+```
+
+
+Next, we find a few entries that are very interesting for further investigation:
+
+```{r investigate_paystatus5}
+train%>%filter(ID%in%c(110,122, 143, 149,574))
+```
+
+From the above, we can make a few interesting observations: 
+
+* ID 110 seems to suggest BILL_AMT_x corresponds to PAY_AMT_x+1  
+* ID 143 and 149 Pay status can jump from 0 to 2, which as said before should be against the explanation of documentation
+* ID 149 Pay status can decrease from 3 to 2 and 2 to 1, which is against the explanation in the documentation
+* ID 122 suggests one can default even if BILL_AMT1 =0, and this is counter-intuitive.
+* ID 574 seems to suggest PAY_4 relates to BILL_AMT3 and PAY_AMT4
+
+Based on the findings of ID 574, we run a statistics table among PAY_4, PAY_AMT3/BILL_AMT4
+```{r investigate_paystatus6}
+train%>%filter(BILL_AMT4!=0)%>%mutate(ratio=PAY_AMT3/BILL_AMT4)%>%
+group_by(PAY_3)%>% summarise(median=median(ratio),mean=mean(ratio), 
+Q_10=quantile(ratio,0.1),Q_25=quantile(ratio,0.25),Q_75=quantile(ratio,0.75))
+```
+
+Previously, we conjecture status 0 probably represents one has made some "min pay".  The above data seems to support that as the 0.1 quantile and 0.25 quantile of Payment Amount/Bill Amount ratio for status 0 is much higher than status 1.
+
+#### Sub 2.2.C Check Independence
+Finally, we want to check if the data are independent to each other.  While we expect the default status or payment status should be dependent on other variables, we expect some variables such as SEX and MARRIAGE should be independent to each other.  However, we find that all are dependent on each other, including these demographic variables.  This is again counter-intuitive. 
+```{r investigate_independence, warning=FALSE}
+chisq.test(train$SEX, train$default)$p.value
+chisq.test(train$SEX, train$EDUCATION)$p.value
+chisq.test(train$SEX, train$MARRIAGE)$p.value
+chisq.test(train$SEX, train$AGE)$p.value
+chisq.test(train$SEX, train$PAY_0)$p.value
+chisq.test(train$SEX, train$LIMIT_BAL)$p.value
+chisq.test(train$EDUCATION, train$PAY_0)$p.value
+chisq.test(train$EDUCATION, train$MARRIAGE)$p.value
+chisq.test(train$PAY_0, train$PAY_2)$p.value
+```
+
+### Sub 2.3 Visualization
+This section requires ggpubr library.  The codes for generating the charts are very long, and so they will not be displayed in this pdf report.  Interested readers can refer to the codes in the R codes file.  
+
+#### Sub 2.3.A Charting Demographic Data vs Default
+Firstly, we will start with charts visualizing demographic data against default.  In the charts below, the blue part of the column charts represent default ratio, and the pink part represents non-default ratio.  As one can only be either default or non-default, the total of these two add up to 100%.  The black line represents the population in that category, and should be read against the axis on the right.   For example, in the SEX diagram, we see there are roughly 10000 Male and 15000 Female.    The blue line represents the default rate of the whole training set.  
+
+One of the purposes of these charts are to spot variables that can be used in the creation of proprietary model.  Ideally, we should look for categories where firstly, the default rate significantly differs from the general population default rate and secondly, there are significant populations in these categories.   It appears none of these variables or categories would satisfy these criteria.  For example, even though EDUCATION = others default rate significantly differs from the general default rate, the population size of that category is very small.  On the other hand, SEX = FEMALE appears to have a large population, but the default rate does not differ much from the overall default rate.  Therefore, we are not going to use any of these variables in the proprietary model.
+
+The second facet grid chart below allows us to perform a similar analysis, but on combination of these demographic data.  
+
+```{r demographic_vs_default, echo=FALSE, warning=FALSE, fig.height = 20, fig.width = 15}
+#3.A Charting Demographic Data vs Default
+#3.A.i SEX vs default
+sex_vs_default<-train%>% select(SEX, default) %>% group_by(SEX) %>% mutate(n2=n()) %>% ungroup() %>% group_by(SEX, default) %>% summarize(prop=n()/mean(n2), n= mean(n2)/total_pop)
+chart_sex<-ggplot(sex_vs_default) +
+  geom_col(aes(x = SEX, y = prop, fill = default), width=0.5)+ 
+  geom_line(aes(x=SEX, y=n, group=1))+
+  geom_point(aes(x=SEX, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different sex") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.y = element_blank()) + 
+  scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.A.ii EDUCATION vs default
+edu_vs_default<-train%>% select(EDUCATION, default) %>% group_by(EDUCATION) %>% mutate(n2=n()) %>% ungroup() %>% group_by(EDUCATION, default) %>% summarize(prop=n()/mean(n2), n= mean(n2)/total_pop)
+chart_edu<-ggplot(edu_vs_default) +
+  geom_col(aes(x = EDUCATION, y = prop, fill = default), width=0.5)+ 
+  geom_line(aes(x=EDUCATION, y=n, group=1))+
+  geom_point(aes(x=EDUCATION, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different sex") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.y = element_blank()) + 
+  scale_x_discrete(breaks=c("0", "1","2", "3", "4", "5", "6"), labels=c("Unknown_0", "graduate school", "university", "high school", "others", "unknown_5", "unknown_6"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.A.iii MARRIAGE vs default
+marriage_vs_default<-train%>% select(MARRIAGE, default) %>% group_by(MARRIAGE) %>% mutate(n2=n()) %>% ungroup() %>% group_by(MARRIAGE, default) %>% summarize(prop=n()/mean(n2), n= mean(n2)/total_pop)
+chart_marriage<-ggplot(marriage_vs_default) +
+  geom_col(aes(x = MARRIAGE, y = prop, fill = default), width=0.5)+ 
+  geom_line(aes(x=MARRIAGE, y=n, group=1))+
+  geom_point(aes(x=MARRIAGE, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different sex") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.y = element_blank()) + 
+  scale_x_discrete(breaks=c("0", "1","2", "3"), labels=c("unknown_0", "married", "single", "others"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.A.iv Charting Age vs Default
+age_vs_default<-train%>% select(AGE, default) %>% group_by(AGE) %>% mutate(n2=n()) %>% ungroup() %>% group_by(AGE, default) %>% summarize(prop=n()/mean(n2), n= mean(n2)/total_pop)
+chart_age<-ggplot(age_vs_default) +
+  geom_col(aes(x = AGE, y = prop, fill = default), width=0.5)+ 
+  geom_line(aes(x=AGE, y=7*n, group=1))+
+  geom_point(aes(x=AGE, y=7*n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different Age") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop/7 , name = "Population"))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")+ 
+  xlim(20, 80)
+
+#3.A.v Combine Chart(i) (may need to load twice depending on computing power)
+chart_personal<-ggarrange(ggarrange(chart_sex, chart_marriage, ncol = 2,nrow=1, align = "h",common.legend = TRUE, legend = "none"), chart_edu, chart_age,ncol=1, nrow = 3, 
+  align = "v",common.legend = TRUE, legend = "bottom")
+
+annotate_figure(chart_personal,
+                top = text_grob("Default status \nacross Demographic Data", color = "red", face = "bold", size = 30),
+                left = text_grob("Default Proportion",  rot = 90, size =20),
+                right = text_grob("Population",  size =20, rot=270)
+)
+```
+
+
+
+```{r demographic_vs_default2, echo=FALSE, warning=FALSE, fig.height = 10, fig.width = 15}
+#3.A.vi Combine Chart(ii) (may need to load twice depending on computing power)
+personal_vs_default<-train%>% select(SEX, EDUCATION, MARRIAGE, default) %>% group_by(SEX, EDUCATION, MARRIAGE) %>% mutate(n2=n()) %>% ungroup() %>% 
+  group_by(SEX, EDUCATION, MARRIAGE, default) %>% summarize(prop=n()/mean(n2), n= mean(n2)/total_pop)%>% filter((MARRIAGE==1|MARRIAGE==2)&(EDUCATION==1|EDUCATION==2|EDUCATION==3))
+
+levels(personal_vs_default$MARRIAGE)<-c("unknown_0", "married", "single", "others")
+levels(personal_vs_default$EDUCATION)<-c("Unknown_0", "graduate school", "university", "high school", "others", "unknown_5", "unknown_6")
+
+ggplot(personal_vs_default) +
+  geom_col(aes(x = SEX, y = prop, fill = default), width=0.5)+ 
+  geom_line(aes(x=SEX, y=n, group=1))+
+  geom_point(aes(x=SEX, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different sex") +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), name ="Default Proportion",
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")+
+  facet_grid(MARRIAGE ~ EDUCATION)
+```
+
+
+#### Sub 2.3.B Charting PAY status vs Default
+We repeat the same exercise but on PAY status.  These fields appear to be promising for building the proprietary model, as status -2, -1, 0, 1, 2 of PAY_0, status 2 of PAY_2 to PAY_6 all satisfy the criteria mentioned above.
+
+```{r paystatus_vs_default, echo=FALSE, warning=FALSE, fig.height = 20, fig.width = 15}
+#3.B Charting Pay status vs Default
+#3.B.i PAY_0 vs default
+pay0_vs_default<-train%>% select(PAY_0, default) %>% group_by(PAY_0) %>% mutate(n2=n()) %>% ungroup() %>% group_by(PAY_0, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_pay0<- ggplot(pay0_vs_default) +
+  geom_col(aes(x = PAY_0, y = prop, fill = default))+ 
+  geom_line(aes(x=PAY_0, y=n, group=1))+
+  geom_point(aes(x=PAY_0, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.B.ii PAY_2 vs default
+pay2_vs_default<- pay2_vs_default<-train%>% select(PAY_2, default) %>% group_by(PAY_2) %>% mutate(n2=n()) %>% ungroup() %>% group_by(PAY_2, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_pay2<-ggplot(pay2_vs_default) +
+  geom_col(aes(x = PAY_2, y = prop, fill = default))+ 
+  geom_line(aes(x=PAY_2, y=n, group=1))+
+  geom_point(aes(x=PAY_2, y=n, group=1))+
+    theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_2 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")  
+
+#3.B.iii PAY_3 vs default
+pay3_vs_default<-train%>% select(PAY_3, default) %>% group_by(PAY_3) %>% mutate(n2=n()) %>% ungroup() %>% group_by(PAY_3, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_pay3<- ggplot(pay3_vs_default) +
+  geom_col(aes(x = PAY_3, y = prop, fill = default))+ 
+  geom_line(aes(x=PAY_3, y=n, group=1))+
+  geom_point(aes(x=PAY_3, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_3 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")  
+
+#3.B.iv PAY_4 vs default
+pay4_vs_default<-train%>% select(PAY_4, default) %>% group_by(PAY_4) %>% mutate(n2=n()) %>% ungroup() %>% group_by(PAY_4, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_pay4<- ggplot(pay4_vs_default) +
+  geom_col(aes(x = PAY_4, y = prop, fill = default))+ 
+  geom_line(aes(x=PAY_4, y=n, group=1))+
+  geom_point(aes(x=PAY_4, y=n, group=1))+
+   theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_4 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")  
+
+#3.B.v PAY_5 vs default
+pay5_vs_default<-train%>% select(PAY_5, default) %>% group_by(PAY_5) %>% mutate(n2=n()) %>% ungroup() %>% group_by(PAY_5, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_pay5<- ggplot(pay5_vs_default) +
+  geom_col(aes(x = PAY_5, y = prop, fill = default))+ 
+  geom_line(aes(x=PAY_5, y=n, group=1))+
+  geom_point(aes(x=PAY_5, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_5 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")  
+
+#3.B.vi PAY_6 vs default
+pay6_vs_default<-train%>% select(PAY_6, default) %>% group_by(PAY_6) %>% mutate(n2=n()) %>% ungroup() %>% group_by(PAY_6, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_pay6<- ggplot(pay6_vs_default) +
+  geom_col(aes(x = PAY_6, y = prop, fill = default))+ 
+  geom_line(aes(x=PAY_6, y=n, group=1))+
+  geom_point(aes(x=PAY_6, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_6 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")  
+
+#3.B.vii Combine Chart (may need to run again depending on the computing power)
+chart_pay<-ggarrange(chart_pay0, chart_pay2,chart_pay3, chart_pay4, chart_pay5, chart_pay6, heights = c(2, 2, 2),ncol = 2, nrow = 3, 
+          align = "v",common.legend = TRUE, legend = "bottom")
+
+annotate_figure(chart_pay,
+                top = text_grob("Default status \nacross different PAY status", color = "red", face = "bold", size = 30),
+                left = text_grob("Default Proportion",  size =20, rot = 90),
+                right = text_grob("Population",  size =20, rot=270)
+)
+```
+
+#### Sub 2.3.C Charting LIMIT_BAL vs Default
+We repeat the same analysis between LIMIT_BAL and default.  This field may potentially be useful in building our proprietary model, but it appears they are not as strong as the PAY status.
+
+```{r LIMBAL_vs_default, echo=FALSE, warning=FALSE, fig.height = 10, fig.width = 15}
+#3.C Charting LIMIT_BAL vs default
+LIMIT_BAL_vs_default<-train%>% select(LIMIT_BAL, default) %>% group_by(LIMIT_BAL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(LIMIT_BAL, default) %>% summarize(prop=n()/mean(n2), n= mean(n2)/total_pop)
+ggplot(LIMIT_BAL_vs_default) +
+  geom_col(aes(x = LIMIT_BAL, y = prop, fill = default))+ 
+  geom_line(aes(x=LIMIT_BAL, y=n*8, group=1))+
+  geom_point(aes(x=LIMIT_BAL, y=n*8, group=1))+
+  theme(legend.position = "bottom") + 
+  labs(title = "Default status \nacross different Limit Balance") +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_x_continuous(breaks = c(0, 200000, 400000, 600000, 800000),label = c(0, 2, 4, 6, 8), name = "Limit Balance (100k NTD)")+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop/8 , name = "Population"))+
+   geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+ geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+``` 
+
+#### Sub 2.3.D Charting BILL_AMT vs Default
+We repeat the same analysis between BILL_AMT and default.  These fields may potentially be useful in building our proprietary model, but it appears they are not as strong as the PAY status.
+
+```{r BILLAMT_vs_default, echo=FALSE, warning=FALSE, fig.height = 20, fig.width = 15}
+#3.D Charting Bill Amount vs default
+#3.D.i BILL_AMT1 vs default
+BILL1_vs_default<-train%>% mutate(BILL=round(BILL_AMT1/10000,0)) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_BILL1<- ggplot(BILL1_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n*2.5, group=1))+
+  geom_point(aes(x=BILL, y=n*2.5, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop/2.5 , name = "Population"))+
+  scale_x_continuous(limits = c(0, 60))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.D.ii BILL_AMT2 vs default
+BILL2_vs_default<-train%>% mutate(BILL=round(BILL_AMT2/10000,0)) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_BILL2<- ggplot(BILL2_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n*2.5, group=1))+
+  geom_point(aes(x=BILL, y=n*2.5, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop/2.5 , name = "Population"))+
+  scale_x_continuous(limits = c(0, 60))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.D.iii BILL_AMT3 vs default
+BILL3_vs_default<-train%>% mutate(BILL=round(BILL_AMT3/10000,0)) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_BILL3<- ggplot(BILL3_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n*2.5, group=1))+
+  geom_point(aes(x=BILL, y=n*2.5, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop/2.5 , name = "Population"))+
+  scale_x_continuous(limits = c(0, 60))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.D.iv BILL_AMT4 vs default
+BILL4_vs_default<-train%>% mutate(BILL=round(BILL_AMT4/10000,0)) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_BILL4<- ggplot(BILL4_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n*2.5, group=1))+
+  geom_point(aes(x=BILL, y=n*2.5, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop/2.5 , name = "Population"))+
+  scale_x_continuous(limits = c(0, 60))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.D.v BILL_AMT5 vs default
+BILL5_vs_default<-train%>% mutate(BILL=round(BILL_AMT5/10000,0)) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_BILL5<- ggplot(BILL5_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n*2.5, group=1))+
+  geom_point(aes(x=BILL, y=n*2.5, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop/2.5 , name = "Population"))+
+  scale_x_continuous(limits = c(0, 60))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.D.v BILL_AMT6 vs default
+BILL6_vs_default<-train%>% mutate(BILL=round(BILL_AMT6/10000,0)) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_BILL6<- ggplot(BILL6_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n*2.5, group=1))+
+  geom_point(aes(x=BILL, y=n*2.5, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop/2.5 , name = "Population"))+
+  scale_x_continuous(limits = c(0, 60))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+
+
+#3.D.v Combine BILL_AMT chart (may need to run again depending on the computing power)
+chart_bill<-ggarrange(chart_BILL1, chart_BILL2,chart_BILL3, chart_BILL4, chart_BILL5, chart_BILL6, labels=c("Bill_1","Bill_2","Bill_3","Bill_4","Bill_5","Bill_6" ),heights = c(2, 2, 2),ncol = 2, nrow = 3, 
+                     align = "v",common.legend = TRUE, legend = "bottom")
+annotate_figure(chart_bill,
+                top = text_grob("Default status \nacross different Bill Amount", color = "red", face = "bold", size = 30),
+                  left = text_grob("Default Proportion",  size =20, rot = 90),
+                right = text_grob("Population",  size =20, rot=270),
+                bottom = text_grob("Bill Amount (NTD 10k)", color = "blue", face = "bold", size = 25),
+)
+```
+
+#### Sub 2.3.E Charting PAY_AMT vs Default
+The charts below shows that majority of the population pays less than NTD5000, and people in that category have a default rate that is slightly higher than the overall default rate.  The rest who pays more than that will have a lower default rate than the average.
+
+```{r PAYAMT_vs_default, echo=FALSE, warning=FALSE, fig.height = 20, fig.width = 15}
+#3.E Charting Pay Amount vs default
+#3.E.i PAY_AMT1 vs default
+PAYAMT1_vs_default<-train%>% mutate(BILL=round(PAY_AMT1/10000,0)) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_PAYAMT1<- ggplot(PAYAMT1_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n, group=1))+
+  geom_point(aes(x=BILL, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  scale_x_continuous(limits = c(-5, 60))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.E.ii PAY_AMT2 vs default
+PAYAMT2_vs_default<-train%>% mutate(BILL=round(PAY_AMT2/10000,0)) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_PAYAMT2<- ggplot(PAYAMT2_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n, group=1))+
+  geom_point(aes(x=BILL, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  scale_x_continuous(limits = c(-5, 60))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.E.iii PAY_AMT3 vs default
+PAYAMT3_vs_default<-train%>% mutate(BILL=round(PAY_AMT3/10000,0)) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_PAYAMT3<- ggplot(PAYAMT3_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n, group=1))+
+  geom_point(aes(x=BILL, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  scale_x_continuous(limits = c(-5, 60))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.E.iv PAY_AMT4 vs default
+PAYAMT4_vs_default<-train%>% mutate(BILL=round(PAY_AMT4/10000,0)) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_PAYAMT4<- ggplot(PAYAMT4_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n, group=1))+
+  geom_point(aes(x=BILL, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  scale_x_continuous(limits = c(-5, 60))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.E.v PAY_AMT5 vs default
+PAYAMT5_vs_default<-train%>% mutate(BILL=round(PAY_AMT5/10000,0)) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_PAYAMT5<- ggplot(PAYAMT5_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n, group=1))+
+  geom_point(aes(x=BILL, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  scale_x_continuous(limits = c(-5, 60))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.E.vi PAY_AMT6 vs default
+PAYAMT6_vs_default<-train%>% mutate(BILL=round(PAY_AMT6/10000,0)) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_PAYAMT6<- ggplot(PAYAMT6_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n, group=1))+
+  geom_point(aes(x=BILL, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  scale_x_continuous(limits = c(-5, 60))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+
+#3.E.vii Combine PAY_AMT chart (may need to run again depending on the computing power)
+chart_payamt<-ggarrange(chart_PAYAMT1, chart_PAYAMT2,chart_PAYAMT3, chart_PAYAMT4, chart_PAYAMT5, chart_PAYAMT6, labels=c("Pay_1","Pay_2","Pay_3","Pay_4","Pay_5","Pay_6" ),heights = c(2, 2, 2),ncol = 2, nrow = 3, 
+                      align = "v",common.legend = TRUE, legend = "bottom")
+annotate_figure(chart_payamt,
+                top = text_grob("Default status \nacross different Pay Amount", color = "red", face = "bold", size = 30),
+                              left = text_grob("Default Proportion",  size =20, rot = 90),
+                right = text_grob("Population",  size =20, rot=270),
+                bottom = text_grob("Pay Amount (NTD 10k)", color = "blue", face = "bold", size = 25),
+)
+```
+
+#### Sub 2.3.F Charting BILL_AMT LIMIT_BAL ratio vs Default
+Next, we explore the relationship between BILL_AMT/LIMIT BAL and default rate.  Intuitively, the LIMIT_BAL should proxy the maximum amount of money one can afford.  If one has a bill that is very large compared to the LIMIT_BAL, then he is more likely to have a failure to pay resulting in default.  The following charts shows there is quite a strong relationship between this ratio and the default rate.  
+
+```{r BILLLIMIT_vs_default, echo=FALSE, warning=FALSE, fig.height = 20, fig.width = 15}
+#3.F Charting Pay Credit Limit ratio vs default
+#3.F.i BILL_AMT1 LIMIT_BAL ratio vs default
+BILL1Limit_vs_default<-train%>% mutate(BILL=round(BILL_AMT1/LIMIT_BAL/0.05)*0.05) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_BILL1Limit<- ggplot(BILL1Limit_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n, group=1))+
+  geom_point(aes(x=BILL, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5), axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1), limits = c(-0.1, 2))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.F.ii BILL_AMT2 LIMIT_BAL ratio vs default
+BILL2Limit_vs_default<-train%>% mutate(BILL=round(BILL_AMT2/LIMIT_BAL/0.05)*0.05) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_BILL2Limit<- ggplot(BILL2Limit_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n, group=1))+
+  geom_point(aes(x=BILL, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5), axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1), limits = c(-0.1, 2))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.F.iii BILL_AMT3 LIMIT_BAL ratio vs default
+BILL3Limit_vs_default<-train%>% mutate(BILL=round(BILL_AMT3/LIMIT_BAL/0.05)*0.05) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_BILL3Limit<- ggplot(BILL3Limit_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n, group=1))+
+  geom_point(aes(x=BILL, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5), axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1), limits = c(-0.1, 2))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.F.iv BILL_AMT4 LIMIT_BAL ratio vs default
+BILL4Limit_vs_default<-train%>% mutate(BILL=round(BILL_AMT4/LIMIT_BAL/0.05)*0.05) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_BILL4Limit<- ggplot(BILL4Limit_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n, group=1))+
+  geom_point(aes(x=BILL, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5), axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1), limits = c(-0.1, 2))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.F.v BILL_AMT5 LIMIT_BAL ratio vs default
+BILL5Limit_vs_default<-train%>% mutate(BILL=round(BILL_AMT5/LIMIT_BAL/0.05)*0.05) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_BILL5Limit<- ggplot(BILL5Limit_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n, group=1))+
+  geom_point(aes(x=BILL, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5), axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1), limits = c(-0.1, 2))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+#3.F.v BILL_AMT6 LIMIT_BAL ratio vs default
+BILL6Limit_vs_default<-train%>% mutate(BILL=round(BILL_AMT6/LIMIT_BAL/0.05)*0.05) %>% select(BILL, default) %>% group_by(BILL) %>% mutate(n2=n()) %>% ungroup() %>% group_by(BILL, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_BILL6Limit<- ggplot(BILL6Limit_vs_default) +
+  geom_col(aes(x = BILL, y = prop, fill = default))+ 
+  geom_line(aes(x=BILL, y=n, group=1))+
+  geom_point(aes(x=BILL, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  #labs(title = "Default status \nacross different PAY_0 status") +
+  theme(plot.title = element_text(hjust = 0.5), axis.title.x = element_blank(),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1), limits = c(-0.1, 2))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+
+#3.F.vi Combine BILL_AMT6 LIMIT_BAL ratio chart (may need to run again depending on the computing power)
+chart_billlimit<-ggarrange(chart_BILL1Limit, chart_BILL2Limit,chart_BILL3Limit, chart_BILL4Limit, chart_BILL5Limit, chart_BILL6Limit, labels=c("Bill_1/Limit","Bill_2/Limit","Bill_3/Limit","Bill_4/Limit","Bill_5/Limit","Bill_6/Limit" ),heights = c(2, 2, 2),ncol = 2, nrow = 3, 
+                      align = "v",common.legend = TRUE, legend = "bottom")
+annotate_figure(chart_billlimit,
+                top = text_grob("Default status \nacross different Bill Amount divided by Limit Balance", color = "red", face = "bold", size = 30),
+                              left = text_grob("Default Proportion",  size =20, rot = 90),
+                right = text_grob("Population",  size =20, rot=270),
+                bottom = text_grob("Bill Amount/Credit Balance", color = "blue", face = "bold", size = 25),
+)
+```
+
+#### Sub 2.3.G Charting BILL_AMT LIMIT_BAL ratio vs PAY status
+Next, we will explore the relationship among BILL_AMT LIMIT_BAL ratio, PAY status and default rate.  It appears that majority of the default (blue dots) appear on the "up" side rather than the "right' side.  This means the PAY status are much stronger predictor of default than the ratio.
+
+```{r BILLLIMIT_vs_PAY, echo=FALSE, warning=FALSE, fig.height = 10, fig.width = 15}
+#3.G Charting BILL Limit BALANCE ratio vs PAY status
+BILL1Limit_vs_PAY<-train%>% mutate(BILLAMT1_LIMIT_ratio=round(BILL_AMT1/LIMIT_BAL/0.05)*0.05) %>% select(BILLAMT1_LIMIT_ratio, PAY_0, default)
+scatter_BILL1Limit_Pay<- ggplot(BILL1Limit_vs_PAY) +
+  geom_point(aes(x=BILLAMT1_LIMIT_ratio, y=PAY_0, color= default))
+scatter_BILL1Limit_Pay
+```
+
+
+#### Sub 2.3.H Charting different PAY status
+Next, we use a facet heat map on PAY_0, PAY_2, PAY_3 and PAY_4 to visualize how these status affect the default rate.  In the chart, each small block is a heat map with PAY_3 as x-axis and PAY_4 as y-axis.  The big x-axis and y-axis are PAY_0 and PAY_1.  From this heat map, we can see majority of the defaults happen when PAY_0 = 2 or 3.  Also, we see some mainly "green" default in the upper left corner, representing small amount of default can happen when PAY_0 = -1 or -2.  In those areas, majority of the default are in the block PAY_2 = 2.  Moreover, in those blocks, we see that the darkest color are usually in the small pieces where PAY_3 or PAY_4 = 2.
+
+From this heat map, therefore, we can infer that among all these PAY status, PAY_0 has the highest predictive power.  PAY_2, PAY_3 and PAY_4 still have predictive power, but are much weaker.  
+
+
+```{r PAYfacet_vs_Default, echo=FALSE, warning=FALSE, fig.height = 20, fig.width = 15}
+#3.H Charting Pay status vs Default
+All_pay_vs_default<-train%>% select(PAY_0,PAY_2, PAY_3, PAY_4, default) %>% group_by(PAY_0,PAY_2, PAY_3, PAY_4) %>% mutate(n2=n()) %>% ungroup() %>% 
+  group_by(PAY_0,PAY_2, PAY_3, PAY_4, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)%>% filter(default==1)
+ggplot(All_pay_vs_default, aes(PAY_3, PAY_4, fill = prop))+ 
+  geom_tile(colour = "white") + 
+  facet_grid(PAY_0 ~ PAY_2) + 
+  scale_fill_gradient(low="green", high="red") +
+  labs(x="PAY_0",
+       y="PAY_2",
+       title = "Default Rate Heat Map", 
+       subtitle="vs different pay status", 
+       fill="Close")
+```
+
+#### Sub 2.3.I Charting Index vs default
+Based on the visualization above, we propose an index I as
+
+\begin{equation}
+\begin{aligned}
+I = PAY_0 + \alpha PAY_2 + \alpha^2 PAY_3 + \alpha^3 PAY_4 + \alpha^4 PAY_5 + \alpha^5 PAY_ 6 + \\
+\lambda (BILL_1 + \alpha BILL_2 + \alpha^2 BILL_3 + \alpha^3 BILL_4 + \alpha^4 BILL_5 + \alpha^5 BILL_ 6)/LIMIT
+\end{aligned}
+\label{eq:1}
+\end{equation}
+
+Then we plot $I$ against default assuming $\alpha=0.4$ and $\lambda=0.1$.  The chart below seems to show this index have a strong positive relationship with default rate.  We will use this $I$ to create our proprietary model.
+
+```{r Index_vs_default, echo=FALSE, warning=FALSE, fig.height = 10, fig.width = 15}
+#3.H Charting Index vs Default
+alpha<-0.4
+lambda<-0.1
+pay_index<-train %>% 
+  mutate(index1=(as.numeric(paste(PAY_0))+alpha*as.numeric(paste(PAY_2))+alpha^2*as.numeric(paste(PAY_3))+alpha^3*as.numeric(paste(PAY_4))+alpha^4*as.numeric(paste(PAY_5))+alpha^5*as.numeric(paste(PAY_6))),
+                          index2=(BILL_AMT1+alpha*BILL_AMT2+alpha^2*BILL_AMT3+alpha^3*BILL_AMT4+alpha^4*BILL_AMT5+alpha^5*BILL_AMT6)/LIMIT_BAL,
+                          index=0.5*round(index1+lambda*index2)/0.5) %>% group_by(index) %>% mutate(n2=n()) %>% ungroup() %>% 
+  group_by(index, default) %>% summarize(prop=n()/mean(n2), n=mean(n2)/total_pop)
+chart_index<- ggplot(pay_index) +
+  geom_col(aes(x = index, y = prop, fill = default))+ 
+  geom_line(aes(x=index, y=n, group=1))+
+  geom_point(aes(x=index, y=n, group=1))+
+  theme(legend.position = "bottom") + 
+  labs(title = "Default status vs Index (alpha=0.4, lambda=0.1)") +
+  theme(plot.title = element_text(hjust = 0.5),  axis.title.y = element_blank()) + 
+  #scale_x_discrete(breaks=c("1","2"), labels=c("Male", "Female"))+
+  scale_fill_discrete(name = "Default status", labels = c("No Default", "Default"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     sec.axis = sec_axis(~ . * total_pop , name = "Population"))+
+  geom_hline(yintercept=default_prop, linetype="dashed", color = "purple")+
+  geom_text(aes(0,default_prop,label = "Overall default rate"), vjust = -1, hjust=0, color ="purple")
+
+
+chart_index
+```
+
+### Sub 2.4 Modeling
+In the sub-section, we will demonstrate a few machine learning models to predict default.  Running of these models take hours or even days, and so readers should keep that in mind before trying these codes.  And due to the very long time required in running the models, I have not completed a full search of best parameters should be used for KNN and Random Forest.
+
+It is very interesting to note that many of these machine learning models considers PAY_0 as the most important modeling parameter.
+
+#### Sub 2.4.A Proprietary Model
+The first model to present here is the proprietary model mentioned above.  From the above, we know that $I$ of Equation \eqref{eq:1}appears to be a strong indicator of default.  However, it is not very clear what is the best parameter for $\alpha$ and $\lambda$.  In the codes below, we will see how to maximize the model accuracy by trying different values of $\alpha$ and $\lambda$ and see what threshold the Index has to be above in order to consider it as default. 
+
+```{r prop_train, echo=TRUE, message=TRUE, warning=FALSE}
+#4.A Proprietary Model
+Prop_Model<- function(alpha, threshold, lambda){
+p<-train %>%  
+  mutate(index1=(as.numeric(paste(PAY_0))+alpha*as.numeric(paste(PAY_2))+
+  alpha^2*as.numeric(paste(PAY_3))+ alpha^3*as.numeric(paste(PAY_4))+
+  alpha^4*as.numeric(paste(PAY_5))+alpha^5*as.numeric(paste(PAY_6))), 
+  index2=(BILL_AMT1+alpha*BILL_AMT2+alpha^2*BILL_AMT3+alpha^3*BILL_AMT4+
+  alpha^4*BILL_AMT5+alpha^5*BILL_AMT6)/LIMIT_BAL,
+  p=ifelse(index1+index2*lambda>=threshold, 1,0)) %>%
+pull(p)
+c(alpha, threshold, lambda, confusionMatrix(data=as.factor(p), reference=train$default)$overall["Accuracy"])
+}
+
+Prop_Model_Prediction<- function(dataset, alpha, threshold, lambda){
+  p<-dataset%>% 
+    mutate(index1=(as.numeric(paste(PAY_0))+alpha*as.numeric(paste(PAY_2))+
+    alpha^2*as.numeric(paste(PAY_3))+alpha^3*as.numeric(paste(PAY_4))+
+    alpha^4*as.numeric(paste(PAY_5))+alpha^5*as.numeric(paste(PAY_6))), 
+    index2=(BILL_AMT1+alpha*BILL_AMT2+alpha^2*BILL_AMT3+alpha^3*BILL_AMT4+
+    alpha^4*BILL_AMT5+alpha^5*BILL_AMT6)/LIMIT_BAL,
+    p=ifelse(index1+index2*lambda>=threshold, 1,0)) %>%
+    pull(p)
+  as.factor(p)
+#  confusionMatrix(data=as.factor(p), reference=dataset$default)
+}
+
+v1<-rep(seq(0,1,0.1),121)
+v2<-rep(rep(seq(0,5,0.5),each=11), time=11)
+v3<-rep(seq(0,1,0.1), each = 121)
+
+P_Model_Calibration<-mapply(Prop_Model,v1, v2, v3)
+P_Model_Calibration[, which(P_Model_Calibration[4,] == max(P_Model_Calibration[4,]), arr.ind = TRUE)]
+```
+
+We find that the optimal accuracy can be achieved by
+
+\begin{equation}
+\begin{aligned}
+\alpha=0.2 \\
+Threshold = 1.5 \\
+\lambda = 0
+\end{aligned}
+\end{equation}
+It turns out the bill limit ratio is not needed in the model.  The accuracy of this model and also its confusion matrix, based on training data, are shown below:
+```{r prop_train_accuracy, echo=TRUE, message=TRUE, warning=FALSE}
+P_train<-Prop_Model_Prediction(train, 0.2,1.5,0)
+confusionMatrix(data=P_train, reference=train$default)
+```
+
+#### Sub 2.4.B Naive Bayesian
+The second model we propose is the Naive Bayesian.  We will use the train function in the caret package to calibrate the model.
+
+```{r nb_train, message=TRUE, warning=FALSE, include=FALSE}
+#4.B naive bayseian
+Sys.time()
+model_nb = train(train[ ,2:24], train$default,'nb',trControl=trainControl(method='cv',number=10))
+Sys.time()
+#y_hat_nb <- predict(model_nb, train, type = "class")
+
+```
+ 
+The accuracy of the model, based on training data, is shown below.   Also, we will see below that this model considers PAY_0 as the most important modeling parameter.
+```{r nb_train_accuracy, echo=TRUE, message=TRUE, warning=FALSE}
+model_nb
+varImp(model_nb)
+```
+
+#### Sub 2.4.C KNN
+The third model we want to try is the KNN. We have tried the k from 1 to 60 and find the accuracy continues to improve till 60.  We think it is entirely plausible that the accuracy can continue to increase after 60.  However, we stop it here as only run the case $k=60$ here because the time to run the model calibration is too long.   The R codes file have the codes to run from 1 to 60 and interested readers can run it from there.
+
+```{r knn_train, echo=TRUE, message=TRUE, warning=FALSE}
+#4.C knn (takes days to complete)
+Sys.time()
+set.seed(7, sample.kind = "Rounding") 
+#model_knn <- train(train[ ,2:24], train$default, method = "knn", tuneGrid = data.frame(k = seq(1,60)))
+model_knn <- train(train[ ,2:24], train$default, method = "knn", tuneGrid = data.frame(k = 60))
+Sys.time()
+```
+
+The accuracy of the model, based on training data, is shown below.  Also, we will see below that this model considers PAY_0 as the most important modeling parameter.
+```{r knn_train_accruacy, echo=TRUE, message=TRUE, warning=FALSE}
+model_knn
+y_hat_knn_train <- predict(model_knn, train)
+varImp(model_knn)
+```
+
+
+#### Sub 2.4.D Random Forest
+The model we are going to propose here is random forest.  We have tried mtry from 3 to 9 and find the optimal is at 3.  Similar to KNN, the time to run random forest is very long and so we stop at 3 and only run the case $3$ here.  The R codes file have the codes to run from 3 to 9 and interested readers can run it from there.
+
+```{r rf_train, echo=TRUE, message=TRUE, warning=FALSE}
+#4.D random forest
+Sys.time()
+set.seed(9, sample.kind = "Rounding") 
+model_rf <- train(train[ ,2:24], train$default, method = "rf",
+#                  tuneGrid = data.frame(mtry = seq(3, 9, 2)),importance=TRUE)
+tuneGrid = data.frame(mtry = 2),importance=TRUE)
+model_rf
+Sys.time()
+```
+
+The accuracy of the model, based on training data, is shown below.  Also, we will see below that this model considers PAY_0 as the most important modeling parameter.
+```{r rf_train_accruacy, echo=TRUE, message=TRUE, warning=FALSE}
+varImp(model_rf)
+y_hat_rf_train <- predict(model_rf, train)
+```
+
+
+#### Sub 2.4.E Logistic Regression
+The model we present here are the logistic regression.
+```{r glm_train, echo=TRUE, message=TRUE, warning=FALSE}
+#4.E glm
+Sys.time()
+model_glm = train(train[ ,2:24], train$default,'glm')
+Sys.time()
+y_hat_glm_train <- predict(model_glm, test, type = "raw")
+```
+
+The accuracy of the model, based on training data, is shown below.  Also, we will see below that this model considers PAY_0 as the most important modeling parameter.
+```{r glm_train_accruacy, echo=TRUE, message=TRUE, warning=FALSE}
+model_glm
+varImp(model_glm)
+```
+
+
+
+#### Sub 2.4.F Ensemble
+Finally, we present the ensemble model here.  We combine the two best models: proprietary and random forest.  The ensemble model will only consider one will default if both model predicts he will default.
+```{r ensemble_train, echo=TRUE,  message=TRUE, warning=FALSE}
+#4.F Ensemble
+E_Prediction<-function(threshold, p_1,p_2,p_3){
+  if(missing(p_3)){
+    p<-ifelse(as.numeric(paste(p_1))+as.numeric(paste(p_2))>threshold, 1,0)
+    as.factor(p)} 
+  else{
+  p<-ifelse(as.numeric(paste(p_1))+as.numeric(paste(p_2))+as.numeric(paste(p_3))>threshold, 1,0)
+as.factor(p)}
+}
+```
+
+The accuracy of the model, based on training data, is shown below.
+```{r ensemble_train_accuracy_verification, echo=TRUE, message=TRUE, warning=FALSE}
+y_hat_E_train<-E_Prediction(1,y_hat_rf_train, P_train)
+confusionMatrix(data=y_hat_E_train, reference=train$default)
+```
+
+## Section 3: Testing
+In this section, we will run the testing of the model use the test data set.  To put this in context, we need to recognize two important background:
+
+* The overall default rate is around 22 percent.  An extremely basic model assuming there is no default at all will give us 78% of accuracy.  Therefore, we would require any model to achieve at least 78 percent accuracy in order to be considered as useful. 
+
+* In the credit card industry, the profit is only a few percent of the bill if the credit card client does not default, but the loss is 100% of the bill in case of default.  Therefore, the ability to detect default rather than non-default is more important.  
+
+In the subsequent sub-sections, we will find out the accuracy and specificity of each model.
+
+### Sub 3.1 Proprietary Model
+```{r prop_accuracy, echo=TRUE, message=TRUE, warning=FALSE}
+#5.A Proprietary Model
+P_test<-Prop_Model_Prediction(test, 0.2,1.5,0)
+confusionMatrix(data=P_test, reference=test$default)
+```
+
+### Sub 3.2 Naive Bayesian
+```{r nb_accuracy, echo=TRUE, message=TRUE, warning=FALSE}
+#5.B naive bayseian
+y_hat_nb <- predict(model_nb, test, type = "raw")
+confusionMatrix(data=y_hat_nb, reference=test$default)
+```
+
+### Sub 3.3 KNN
+```{r knn_accuracy, echo=TRUE, message=TRUE, warning=FALSE}
+#5.C knn
+y_hat_knn <- predict(model_knn, test)
+confusionMatrix(data = y_hat_knn, reference = test$default)
+```
+
+### Sub 3.4 Random Forest
+```{r rf_accuracy, echo=TRUE, message=TRUE, warning=FALSE}
+#5.D random forest
+y_hat_rf <- predict(model_rf, test)
+confusionMatrix(data = y_hat_rf, reference = test$default)$overall
+```
+
+### Sub 3.5 Logistic Regression
+```{r glm_accuracy, echo=TRUE, message=TRUE, warning=FALSE}
+#5.E glm
+y_hat_glm <- predict(model_glm, test)
+confusionMatrix(data = y_hat_glm, reference = test$default)$overall
+```
+
+### Sub 3.6 Ensemble
+```{r ensemble_accuracy, echo=TRUE, message=TRUE, warning=FALSE}
+#6.F Ensemble
+y_hat_E_test<-E_Prediction(1,y_hat_rf, P_test)
+confusionMatrix(data=y_hat_E_test, reference=test$default)
+```
+
+### Sub 3.7 Summary
+
+Models  | Accuracy on train data | Accuracy on test data  | Specificity on test data
+----- | --------- | -------------------------------
+Proprietary | 82.1% | 81.7% | 32%
+Naive Bayesian | 80.3% | 80.2% | 38%
+KNN (k=60)| 77.7% | 78.1% | 7%
+Random Forest (mtry=3) | 81.7% | 82.3% | 35.4%
+Logistic| 73% | 82.1% | 33.4%
+Ensemble|85.6% | 82.1% | 28.9$
+
+
+## Conclusion and Future Works
+As a conclusion, we have delivered the following:
+
+* We have carefully examined the relationship among different data fields and relationship with default rate.
+
+* We have identified several data abnormalities which should be clarified further.
+
+* With these imperfect data, we have reviewed several default prediction system including a proprietary model.   Nearly most of them can achieve accuracy and specificity better than simply assuming there is no default.
+
+In order to take this research further, the most important is to clarify the abnormality and clean up the data if necessary.  Next is to understand the clear legal definition of default in this data-set.  With these, we can further enhance the model by the following:
+
+* Running a more extensive search of optimal parameters for KNN and random forest 
+
+* Introducing more relevant parameters in the proprietary models
+
+* Using PCA or other relevant techniques to reduce the dimension of the data
+
+Finally, I want to take this opportunity to thank Professor Rafael Irizarry for organizing this great course.  I have learnt tremendously from this.  Equally important, I would like to thank all the staff instructors, who have provided tremendous help and insight in the discussion board and make this course even greater.
